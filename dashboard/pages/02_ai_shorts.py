@@ -1,6 +1,7 @@
 """
 Dashboard Page 2 — AI Shorts Generator
-Interactive Content Studio for idea generation, script writing, and metadata generation.
+Interactive Content Studio for idea generation, script writing, metadata,
+and Full Automated 1080x1920 Video Production.
 """
 
 import sys
@@ -14,6 +15,8 @@ from ai.script_generator import ScriptGenerator
 from ai.title_generator import TitleGenerator
 from ai.hashtag_generator import HashtagGenerator
 from ai.fact_checker import FactChecker
+from engines.ai_shorts.shorts_engine import shorts_engine
+from engines.ai_shorts.category_manager import CategoryManager
 from database.db_manager import db
 
 st.markdown('<div class="section-header">✂️ AI Shorts Generator Studio</div>', unsafe_allow_html=True)
@@ -31,7 +34,100 @@ with col_status1:
 with col_status2:
     st.caption(f"Priority: {', '.join(provider_status['priority'])}")
 
-tab1, tab2, tab3 = st.tabs(["💡 1. Idea Generator", "📝 2. Script & Storyboard Studio", "🏷️ 3. Metadata & Fact Audit"])
+tab_prod, tab1, tab2, tab3 = st.tabs([
+    "🎬 Full Video Production",
+    "💡 1. Idea Generator",
+    "📝 2. Script & Storyboard",
+    "🏷️ 3. Metadata & Audit"
+])
+
+# ── TAB PROD: One-Click Full Video Production ──────────────────────────────────
+with tab_prod:
+    st.markdown("### 🚀 One-Click Automated Short Video Producer")
+    st.caption("Executes the complete 13-step pipeline: Idea ➡️ Script ➡️ Voice ➡️ Visuals ➡️ Subtitles ➡️ 1080x1920 MP4.")
+
+    cat_list = CategoryManager.list_categories()
+    prod_cat = st.selectbox(
+        "Select Category for Video Production",
+        [c["key"] for c in cat_list],
+        format_func=lambda k: CategoryManager.get_profile(k).display_title,
+        key="prod_category_select"
+    )
+
+    prof = CategoryManager.get_profile(prod_cat)
+    st.info(f"**Theme:** {prof.description} | **Voice:** `{prof.recommended_voice}` | **Pacing:** ~{prof.pacing_wpm} WPM")
+
+    col_opt1, col_opt2 = st.columns(2)
+    with col_opt1:
+        custom_topic_override = st.text_input("Optional Custom Topic (Leave blank for AI idea)", placeholder="e.g. Why Saturn Rings are Disappearing")
+    with col_opt2:
+        auto_queue = st.checkbox("Queue in Publishing Queue automatically", value=True)
+
+    produce_btn = st.button("⚡ Produce 1080x1920 Video Now", use_container_width=True, type="primary")
+
+    if produce_btn:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        status_text.text("1/6: Researching and scoring video concept...")
+        progress_bar.progress(15)
+
+        try:
+            status_text.text("2/6: Writing 45-second script & opening hook...")
+            progress_bar.progress(35)
+
+            status_text.text("3/6: Synthesizing voiceover with Edge-TTS...")
+            progress_bar.progress(55)
+
+            status_text.text("4/6: Generating safe-area styled ASS subtitles & visual motion...")
+            progress_bar.progress(75)
+
+            status_text.text("5/6: Encoding 1080x1920 video with NVIDIA NVENC...")
+            progress_bar.progress(90)
+
+            result = shorts_engine.produce_short(
+                category=prod_cat,
+                custom_topic=custom_topic_override if custom_topic_override else None,
+                auto_queue_publish=auto_queue,
+            )
+
+            progress_bar.progress(100)
+            status_text.empty()
+            st.success(f"🎉 Video Successfully Produced! ID #{result.video_id}")
+
+            st.session_state["latest_produced_video"] = result
+
+        except Exception as e:
+            progress_bar.empty()
+            status_text.empty()
+            st.error(f"Production pipeline error: {e}")
+
+    # Display latest rendered video
+    if "latest_produced_video" in st.session_state:
+        res = st.session_state["latest_produced_video"]
+        st.markdown("---")
+        st.markdown(f"### 🎬 Preview: {res.title}")
+
+        prev_col1, prev_col2 = st.columns([1, 1])
+        with prev_col1:
+            if Path(res.video_path).exists():
+                st.video(res.video_path)
+            else:
+                st.warning("Video file not found.")
+
+        with prev_col2:
+            st.metric("Quality Score", f"{res.quality_score}/100")
+            st.write(f"**Duration:** {res.duration_s}s (Target: 45s)")
+            st.write(f"**Category:** {res.category.replace('_', ' ').title()}")
+            st.write(f"**Status:** `{res.status.upper()}`")
+            
+            if Path(res.thumbnail_path).exists():
+                st.markdown("**Generated Thumbnail:**")
+                st.image(res.thumbnail_path, width=240)
+
+            st.markdown(f"**Description:** {res.titles_and_desc.description}")
+            st.markdown(f"**YouTube Tags:** `{res.hashtags.get('youtube', '')}`")
+
 
 # ── TAB 1: Idea Generator ──────────────────────────────────────────────────────
 with tab1:
@@ -88,7 +184,7 @@ with tab1:
                     st.session_state["active_idea_concept"] = idea["concept"]
                     st.session_state["active_idea_hook"] = idea["hook"]
                     st.session_state["active_idea_category"] = selected_cat
-                    st.info(f"Loaded '{idea['title']}'. Switch to the 'Script & Storyboard Studio' tab!")
+                    st.info(f"Loaded '{idea['title']}'. Switch to the 'Script & Storyboard' tab!")
 
 
 # ── TAB 2: Script & Storyboard Studio ──────────────────────────────────────────
