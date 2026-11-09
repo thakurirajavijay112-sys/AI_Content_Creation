@@ -47,32 +47,55 @@ with tab_prod:
     st.caption("Executes the complete 13-step pipeline: Idea ➡️ Script ➡️ Voice ➡️ Visuals ➡️ Subtitles ➡️ 1080x1920 MP4.")
 
     cat_list = CategoryManager.list_categories()
-    prod_cat = st.selectbox(
-        "Select Category for Video Production",
-        [c["key"] for c in cat_list],
-        format_func=lambda k: CategoryManager.get_profile(k).display_title,
-        key="prod_category_select"
-    )
+    from core.languages import LanguageManager, SUPPORTED_LANGUAGES
+
+    col_cat, col_lang = st.columns([1.4, 1.0])
+    with col_cat:
+        prod_cat = st.selectbox(
+            "Select Content Category",
+            [c["key"] for c in cat_list],
+            format_func=lambda k: CategoryManager.get_profile(k).display_title,
+            key="prod_category_select"
+        )
+    with col_lang:
+        lang_list = [
+            ("en", "🇺🇸 English"),
+            ("hi", "🇮🇳 Hindi (हिन्दी)"),
+            ("ne", "🇳🇵 Nepali (नेपाली)"),
+            ("es", "🇪🇸 Spanish (Español)"),
+            ("pt", "🇧🇷 Portuguese (Português)"),
+            ("zh", "🇨🇳 Mandarin (中文)"),
+            ("ja", "🇯🇵 Japanese (日本語)"),
+            ("ar", "🇸🇦 Arabic (العربية)"),
+        ]
+        selected_lang_code = st.selectbox(
+            "Language",
+            options=[l[0] for l in lang_list],
+            format_func=lambda c: dict(lang_list)[c],
+            index=0,
+            key="prod_language_select"
+        )
 
     prof = CategoryManager.get_profile(prod_cat)
-    st.info(f"**Theme:** {prof.description} | **Voice:** `{prof.recommended_voice}` | **Pacing:** ~{prof.pacing_wpm} WPM")
+    lang_prof = LanguageManager.get_profile(selected_lang_code)
+    st.info(f"**Theme:** {prof.description} | **Language:** {lang_prof.name} ({lang_prof.native_name}) | **Pacing:** ~{prof.pacing_wpm} WPM")
 
     col_opt1, col_opt2, col_opt3 = st.columns([1.5, 1.5, 1])
     with col_opt1:
         custom_topic_override = st.text_input("Optional Custom Topic (Leave blank for AI idea)", placeholder="e.g. Why Saturn Rings are Disappearing")
     with col_opt2:
-        voice_options = {
-            "default": f"Category Default ({prof.recommended_voice.split('-')[-1].replace('Neural','')})",
-            "en-US-AndrewMultilingualNeural": "🎙 Andrew — Dynamic & Energetic Male (Recommended)",
-            "en-US-AvaMultilingualNeural": "🎙 Ava — Natural & Warm Female (Recommended)",
-            "en-US-BrianMultilingualNeural": "🎙 Brian — Deep & Rich Storyteller Male",
-            "en-US-EmmaMultilingualNeural": "🎙 Emma — Modern & Crisp Storyteller Female",
-            "en-GB-RyanNeural": "🎙 Ryan — Charismatic British Storyteller",
+        # Load voices dynamically for selected language
+        avail_voices = LanguageManager.get_voices_for_language(selected_lang_code)
+        voice_dict = {
+            "default": f"Default ({avail_voices[0].label if avail_voices else 'Auto'})"
         }
+        for v in avail_voices:
+            voice_dict[v.code] = v.label
+
         chosen_voice_key = st.selectbox(
             "Narrator Voice",
-            options=list(voice_options.keys()),
-            format_func=lambda k: voice_options[k],
+            options=list(voice_dict.keys()),
+            format_func=lambda k: voice_dict[k],
             index=0,
             key="narrator_voice_select"
         )
@@ -91,7 +114,7 @@ with tab_prod:
         progress_bar.progress(15)
 
         try:
-            status_text.text("2/6: Writing 45-second script & opening hook...")
+            status_text.text(f"2/6: Writing 45-second script & hook in {lang_prof.name}...")
             progress_bar.progress(35)
 
             selected_voice = None if chosen_voice_key == "default" else chosen_voice_key
@@ -107,6 +130,7 @@ with tab_prod:
             result = shorts_engine.produce_short(
                 category=prod_cat,
                 custom_topic=custom_topic_override if custom_topic_override else None,
+                language=selected_lang_code,
                 voice_override=selected_voice,
                 auto_queue_publish=auto_queue,
             )

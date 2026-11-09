@@ -52,11 +52,13 @@ class ScriptGenerator:
         concept: str,
         hook: str,
         category: str = "amazing_facts",
+        language: str = "en",
         idea_id: Optional[int] = None,
         engine: str = "ai_shorts",
     ) -> VideoScript:
         """
         Generates a 45-second script structured in 4-5 scenes.
+        Supports 8 languages (en, hi, ne, pt, es, zh, ja, ar).
         Enforces a target word count of 115-135 words (optimal for 45s at 150 WPM).
         """
         system_prompt = (
@@ -65,12 +67,24 @@ class ScriptGenerator:
             "Never use fluff, filler, clichés like 'In a world...', or fake statistics."
         )
 
+        lang_instruction = ""
+        if language and language != "en":
+            from core.languages import LanguageManager
+            lp = LanguageManager.get_profile(language)
+            lang_instruction = f"""
+STRICT LANGUAGE REQUIREMENT:
+- The video "title" and all scene "narration" MUST be written in {lp.name} ({lp.native_name}).
+- Write naturally, colloquially, and fluently as spoken by native {lp.name} speakers.
+- IMPORTANT: All "visual_prompt" strings MUST remain in clear English for stock footage & image generation.
+"""
+
         prompt = f"""
 Write a complete, high-retention 45-second video script.
 Title: {title}
 Core Concept: {concept}
 Opening Hook: {hook}
 Category: {category}
+{lang_instruction}
 
 STRICT TIMING & WORD COUNT RULES:
 1. Target Word Count: EXACTLY 115 to 135 spoken words (this equals 45 seconds when spoken naturally).

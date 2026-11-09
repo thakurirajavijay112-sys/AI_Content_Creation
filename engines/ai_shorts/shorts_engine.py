@@ -75,18 +75,23 @@ class AIShortsEngine:
         category: str = "amazing_facts",
         custom_topic: Optional[str] = None,
         custom_script_text: Optional[str] = None,
+        language: str = "en",
         voice_override: Optional[str] = None,
         auto_queue_publish: bool = True,
     ) -> ShortsProductionResult:
         """
         Executes the full automated production workflow.
         Returns complete metadata, rendered video path, and quality score.
+        Supports 8 languages (en, hi, ne, pt, es, zh, ja, ar).
         """
         start_time = time.time()
         category_clean = category.lower().replace(" ", "_").strip()
         profile = CategoryManager.get_profile(category_clean)
 
-        logger.info(f"=== Starting Engine 1 Production: {profile.display_title} ===")
+        from core.languages import LanguageManager
+        lang_profile = LanguageManager.get_profile(language)
+
+        logger.info(f"=== Starting Engine 1 Production: {profile.display_title} [{lang_profile.name}] ===")
 
         # ── Step 1 & 2 & 3: Idea Selection ──────────────────────────────────────
         idea_id = None
@@ -119,7 +124,7 @@ class AIShortsEngine:
         if custom_script_text:
             script = ScriptGenerator().generate_short_script(
                 title=idea_title, concept=idea_concept, hook=idea_hook,
-                category=category_clean, idea_id=idea_id
+                category=category_clean, language=language, idea_id=idea_id
             )
             script.narration_text = custom_script_text
             script_gen.update_script_text(script.id, custom_script_text)
@@ -129,17 +134,18 @@ class AIShortsEngine:
                 concept=idea_concept,
                 hook=idea_hook,
                 category=category_clean,
+                language=language,
                 idea_id=idea_id,
             )
 
-        logger.info(f"Script ready: {script.word_count} words ({script.estimated_duration_s:.1f}s)")
+        logger.info(f"Script ready ({lang_profile.name}): {script.word_count} words ({script.estimated_duration_s:.1f}s)")
 
         # ── Step 6: Voiceover Generation ────────────────────────────────────────
         timestamp_prefix = int(time.time())
         slug = hashlib.md5(idea_title.encode()).hexdigest()[:8]
         audio_filename = f"voice_{category_clean}_{timestamp_prefix}_{slug}.mp3"
 
-        selected_voice = voice_override or profile.recommended_voice
+        selected_voice = voice_override or lang_profile.default_voice
         tts_result = tts_engine.generate_speech(
             text=script.narration_text,
             output_filename=audio_filename,
@@ -164,7 +170,7 @@ class AIShortsEngine:
         subtitle_generator.generate_styled_ass(
             segments=segments,
             output_path=str(ass_path),
-            font_name="Arial",
+            font_name=lang_profile.font_name,
             font_size=56,
             primary_color=profile.subtitle_primary_color,
             outline_color=profile.subtitle_outline_color,

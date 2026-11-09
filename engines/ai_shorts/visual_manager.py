@@ -108,11 +108,12 @@ class VisualManager:
             if not img_file.exists():
                 continue
 
-            # Alternate zoom directions for dynamic visual engagement
-            zoom_expr = "min(zoom+0.0018,1.25)" if idx % 2 == 0 else "max(1.2-0.0018*on,1.0)"
-            frames = int(30 * duration_per_scene)
-
-            vf = f"zoompan=z='{zoom_expr}':d={frames}:s=1080x1920:fps=30"
+            # Smooth, centered cinematic Ken Burns zoom (d=1 ensures continuous smooth frame progression)
+            vf = (
+                "scale=1080:1920:force_original_aspect_ratio=increase,"
+                "crop=1080:1920,"
+                "zoompan=z='min(zoom+0.0012,1.20)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
+            )
             cmd = [
                 str(ffmpeg), "-y",
                 "-loop", "1",
@@ -121,7 +122,7 @@ class VisualManager:
                 "-t", f"{duration_per_scene:.2f}",
                 "-c:v", "libx264",
                 "-preset", "veryfast",
-                "-crf", "22",
+                "-crf", "20",
                 "-pix_fmt", "yuv420p",
                 str(clip_file),
             ]
@@ -135,7 +136,7 @@ class VisualManager:
         if not clip_paths:
             return None
 
-        # Concatenate all scene clips
+        # Concatenate all scene clips with re-encoding to eliminate glitching & frame tearing
         concat_txt = self.visuals_dir / f"concat_{slug}.txt"
         with open(concat_txt, "w", encoding="utf-8") as f:
             for p in clip_paths:
@@ -147,7 +148,10 @@ class VisualManager:
             "-f", "concat",
             "-safe", "0",
             "-i", str(concat_txt),
-            "-c", "copy",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "20",
+            "-pix_fmt", "yuv420p",
             "-t", f"{total_duration:.2f}",
             str(final_out),
         ]
@@ -162,9 +166,12 @@ class VisualManager:
     def _download_pollinations_image(self, prompt: str, out_path: Path) -> bool:
         """Downloads a high-res 1080x1920 vertical AI visual from Pollinations.ai (Free)."""
         try:
-            encoded = urllib.parse.quote(prompt[:250])
+            # Clean and simplify prompt to 5-8 salient words to avoid URL errors and timeouts
+            clean_words = [w for w in prompt.replace(",", " ").replace(".", " ").replace("'", "").split() if len(w) > 2][:8]
+            clean_prompt = " ".join(clean_words) if clean_words else "cinematic vertical 9:16 background"
+            encoded = urllib.parse.quote(clean_prompt)
             url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true"
-            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            with httpx.Client(timeout=25.0, follow_redirects=True) as client:
                 res = client.get(url)
                 if res.status_code == 200 and len(res.content) > 5000:
                     out_path.write_bytes(res.content)
@@ -175,12 +182,28 @@ class VisualManager:
         return False
 
     def _create_image_card(self, text: str, category: str, out_path: Path):
-        """Creates an offline graphic card when internet is disconnected."""
-        from video.thumbnail import thumbnail_generator
-        thumbnail_generator.create_color_card(
-            text=text[:40],
-            output_path=str(out_path),
-        )
+        """Creates a vibrant, colorful abstract graphic when an image download is unavailable."""
+        from PIL import Image, ImageDraw
+        color_map = {
+            "amazing_facts": ((10, 37, 64), (0, 102, 153)),
+            "motivation": ((28, 28, 28), (184, 134, 11)),
+            "ai_technology": ((10, 25, 47), (0, 180, 216)),
+            "horror_stories": ((31, 5, 11), (102, 12, 24)),
+            "football_facts": ((6, 45, 22), (27, 153, 139)),
+            "cricket_facts": ((14, 42, 71), (43, 112, 201)),
+        }
+        c1, c2 = color_map.get(category, ((10, 37, 64), (0, 102, 153)))
+        img = Image.new("RGB", (1080, 1920), color=c1)
+        draw = ImageDraw.Draw(img)
+        # Draw smooth vertical cinematic gradient
+        for y in range(0, 1920, 2):
+            ratio = y / 1920.0
+            r = int(c1[0] * (1 - ratio) + c2[0] * ratio)
+            g = int(c1[1] * (1 - ratio) + c2[1] * ratio)
+            b = int(c1[2] * (1 - ratio) + c2[2] * ratio)
+            draw.line([(0, y), (1080, y)], fill=(r, g, b), width=2)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(out_path), "JPEG", quality=95)
 
     def _try_fetch_pexels_video(self, query: str, duration_s: float) -> Optional[Path]:
         """Queries Pexels Video API for 9:16 vertical footage."""
