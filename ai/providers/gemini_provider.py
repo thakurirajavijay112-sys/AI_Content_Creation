@@ -17,31 +17,32 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Fallback candidate models in order of priority
+# Fallback candidate models in order of priority (Lite models have separate, much larger free quotas)
 FALLBACK_MODELS = [
-    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemma-4-26b-a4b-it",
 ]
 
 
 class GeminiProvider(BaseAIProvider):
     """
     Google Gemini API provider implementation.
-    Includes model auto-selection and daily quota monitoring.
+    Includes model auto-selection, quota failover (429/503), and daily monitoring.
     """
 
     def __init__(self):
         super().__init__(
             name="gemini",
-            default_model="gemini-3.5-flash"
+            default_model="gemini-3.5-flash-lite"
         )
         self.api_key = config.ai.gemini.api_key
         self._client_configured = False
         self._daily_request_count = 0
         self._last_count_date = datetime.now().date()
-        self._resolved_model: Optional[str] = "gemini-3.5-flash"
+        self._resolved_model: Optional[str] = "gemini-3.5-flash-lite"
 
     def _ensure_configured(self):
         """Initializes the google.generativeai client once key is verified."""
@@ -143,13 +144,20 @@ class GeminiProvider(BaseAIProvider):
                     metadata={"daily_calls_used": self._daily_request_count}
                 )
             except Exception as e:
-                err_str = str(e)
-                if "404" in err_str or "not found" in err_str:
-                    logger.warning(f"Model '{candidate}' not found, trying next candidate...")
+                err_str = str(e).lower()
+                is_retryable = any(
+                    k in err_str
+                    for k in ("404", "not found", "429", "quota", "resourceexhausted", "503", "unavailable", "timed out")
+                )
+                if is_retryable:
+                    logger.warning(
+                        f"Gemini model '{candidate}' unavailable ({e}). "
+                        "Failing over to next candidate model..."
+                    )
                     last_error = e
                     continue
                 else:
-                    logger.error(f"Gemini API error during text generation: {e}")
+                    logger.error(f"Gemini API fatal error during text generation: {e}")
                     raise
 
         raise last_error or RuntimeError("All Gemini model candidates failed.")
