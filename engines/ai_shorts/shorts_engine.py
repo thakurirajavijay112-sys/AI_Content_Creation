@@ -75,6 +75,7 @@ class AIShortsEngine:
         category: str = "amazing_facts",
         custom_topic: Optional[str] = None,
         custom_script_text: Optional[str] = None,
+        voice_override: Optional[str] = None,
         auto_queue_publish: bool = True,
     ) -> ShortsProductionResult:
         """
@@ -138,14 +139,15 @@ class AIShortsEngine:
         slug = hashlib.md5(idea_title.encode()).hexdigest()[:8]
         audio_filename = f"voice_{category_clean}_{timestamp_prefix}_{slug}.mp3"
 
+        selected_voice = voice_override or profile.recommended_voice
         tts_result = tts_engine.generate_speech(
             text=script.narration_text,
             output_filename=audio_filename,
-            voice=profile.recommended_voice,
+            voice=selected_voice,
         )
         audio_path = tts_result.audio_path
         actual_duration = tts_result.duration_s
-        logger.info(f"Voiceover generated: {actual_duration:.1f}s via {tts_result.provider}")
+        logger.info(f"Voiceover generated: {actual_duration:.1f}s via {tts_result.provider} ({selected_voice})")
 
         # ── Step 7: Subtitle Generation ─────────────────────────────────────────
         # Convert word boundaries to dynamic 4-word subtitle segments
@@ -169,12 +171,11 @@ class AIShortsEngine:
             margin_v=340,
         )
 
-        # ── Step 8: Visual Sourcing ─────────────────────────────────────────────
-        query = profile.visual_keywords[0] if profile.visual_keywords else idea_title
-        visual_path = visual_manager.get_or_create_visual(
-            query=query,
+        # ── Step 8: Multi-Scene Cinematic Visual Sourcing ───────────────────────
+        visual_path = visual_manager.get_or_create_multi_scene_visual(
+            scenes=script.scenes,
             category=category_clean,
-            duration_s=actual_duration,
+            total_duration=actual_duration,
             title_text=idea_title,
         )
 

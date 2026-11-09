@@ -57,11 +57,29 @@ with tab_prod:
     prof = CategoryManager.get_profile(prod_cat)
     st.info(f"**Theme:** {prof.description} | **Voice:** `{prof.recommended_voice}` | **Pacing:** ~{prof.pacing_wpm} WPM")
 
-    col_opt1, col_opt2 = st.columns(2)
+    col_opt1, col_opt2, col_opt3 = st.columns([1.5, 1.5, 1])
     with col_opt1:
         custom_topic_override = st.text_input("Optional Custom Topic (Leave blank for AI idea)", placeholder="e.g. Why Saturn Rings are Disappearing")
     with col_opt2:
-        auto_queue = st.checkbox("Queue in Publishing Queue automatically", value=True)
+        voice_options = {
+            "default": f"Category Default ({prof.recommended_voice.split('-')[-1].replace('Neural','')})",
+            "en-US-AndrewMultilingualNeural": "🎙 Andrew — Dynamic & Energetic Male (Recommended)",
+            "en-US-AvaMultilingualNeural": "🎙 Ava — Natural & Warm Female (Recommended)",
+            "en-US-BrianMultilingualNeural": "🎙 Brian — Deep & Rich Storyteller Male",
+            "en-US-EmmaMultilingualNeural": "🎙 Emma — Modern & Crisp Storyteller Female",
+            "en-GB-RyanNeural": "🎙 Ryan — Charismatic British Storyteller",
+        }
+        chosen_voice_key = st.selectbox(
+            "Narrator Voice",
+            options=list(voice_options.keys()),
+            format_func=lambda k: voice_options[k],
+            index=0,
+            key="narrator_voice_select"
+        )
+    with col_opt3:
+        st.write("")
+        st.write("")
+        auto_queue = st.checkbox("Queue automatically", value=True)
 
     produce_btn = st.button("⚡ Produce 1080x1920 Video Now", use_container_width=True, type="primary")
 
@@ -76,10 +94,11 @@ with tab_prod:
             status_text.text("2/6: Writing 45-second script & opening hook...")
             progress_bar.progress(35)
 
-            status_text.text("3/6: Synthesizing voiceover with Edge-TTS...")
+            selected_voice = None if chosen_voice_key == "default" else chosen_voice_key
+            status_text.text("3/6: Synthesizing voiceover with ultra-realistic neural voice...")
             progress_bar.progress(55)
 
-            status_text.text("4/6: Generating safe-area styled ASS subtitles & visual motion...")
+            status_text.text("4/6: Generating scene-by-scene cinematic AI visuals & styled subtitles...")
             progress_bar.progress(75)
 
             status_text.text("5/6: Encoding 1080x1920 video with NVIDIA NVENC...")
@@ -88,6 +107,7 @@ with tab_prod:
             result = shorts_engine.produce_short(
                 category=prod_cat,
                 custom_topic=custom_topic_override if custom_topic_override else None,
+                voice_override=selected_voice,
                 auto_queue_publish=auto_queue,
             )
 
