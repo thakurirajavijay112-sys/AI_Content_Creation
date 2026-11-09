@@ -1,0 +1,12 @@
+# ============================================================
+# AI-CONTENT-AUTOMATION — Dev / Test Requirements
+# Install with: pip install -r requirements-dev.txt
+# ============================================================
+
+-r requirements.txt
+
+# Testing extras
+pytest-cov>=5.0.0
+black>=24.10.0
+ruff>=0.7.0
+mypy>=1.13.0
