@@ -205,11 +205,8 @@ class TestProjectStructure:
             assert path.exists(), f"Required file missing: {f}"
 
     def test_no_env_file_committed(self, project_root):
-        """The actual .env file should not exist in the project (only .env.example)."""
-        # Note: .env SHOULD be in .gitignore — this test just verifies we
-        # haven't accidentally created a .env with real credentials.
-        env_file = project_root / ".env"
-        if env_file.exists():
-            content = env_file.read_text()
-            assert "your_gemini_api_key_here" in content or len(content) < 100, \
-                ".env file appears to contain real credentials — do not commit!"
+        """The .env file must be ignored by git and never tracked in the repository."""
+        gitignore = project_root / ".gitignore"
+        assert gitignore.exists(), ".gitignore file must exist"
+        content = gitignore.read_text(encoding="utf-8")
+        assert ".env" in content, ".gitignore must contain .env"

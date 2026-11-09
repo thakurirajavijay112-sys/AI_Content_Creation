@@ -2,14 +2,14 @@
 AI-CONTENT-AUTOMATION — Google Gemini Provider
 ================================================
 Adapter for Google's Gemini models via the google-generativeai SDK.
-Supports gemini-1.5-flash (default, high speed, generous free quota)
-and gemini-1.5-pro (deep reasoning).
+Supports auto-model discovery (gemini-flash-latest, gemini-pro-latest)
+and daily quota protection.
 """
 
 import json
 import re
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from ai.providers.base_provider import BaseAIProvider, AIResponse
 from config import config
@@ -17,27 +17,41 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Fallback candidate models in order of priority
+FALLBACK_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+]
+
 
 class GeminiProvider(BaseAIProvider):
     """
     Google Gemini API provider implementation.
-    Includes daily quota monitoring to safeguard the 1,500 req/day free limit.
+    Includes model auto-selection and daily quota monitoring.
     """
 
     def __init__(self):
         super().__init__(
             name="gemini",
-            default_model=config.ai.gemini.default_model or "gemini-1.5-flash"
+            default_model="gemini-3.5-flash"
         )
         self.api_key = config.ai.gemini.api_key
         self._client_configured = False
         self._daily_request_count = 0
         self._last_count_date = datetime.now().date()
+        self._resolved_model: Optional[str] = "gemini-3.5-flash"
 
     def _ensure_configured(self):
         """Initializes the google.generativeai client once key is verified."""
         if self._client_configured:
             return
+
+        # Re-check api key from environment if needed
+        if not self.api_key or self.api_key == "your_gemini_api_key_here":
+            import os
+            self.api_key = os.environ.get("GEMINI_API_KEY", "")
 
         if not self.api_key or self.api_key == "your_gemini_api_key_here":
             raise ValueError(
@@ -46,9 +60,9 @@ class GeminiProvider(BaseAIProvider):
             )
 
         import google.generativeai as genai
-        genai.configure(api_key=self.api_key)
+        genai.configure(api_key=self.api_key, transport="rest")
         self._client_configured = True
-        logger.info(f"Gemini client successfully configured with model: {self.default_model}")
+        logger.info("Gemini client successfully configured with REST transport.")
 
     def _check_daily_quota(self):
         """Monitors and protects against exceeding daily free tier limits."""
@@ -66,7 +80,24 @@ class GeminiProvider(BaseAIProvider):
 
     def is_available(self) -> bool:
         """Checks if an API key is provided and valid."""
-        return bool(self.api_key) and self.api_key != "your_gemini_api_key_here"
+        import os
+        env_key = os.environ.get("GEMINI_API_KEY")
+        key = env_key if env_key is not None else self.api_key
+        return bool(key) and key != "your_gemini_api_key_here"
+
+    def _get_candidate_models(self, requested_model: Optional[str] = None) -> List[str]:
+        """Builds an ordered list of model candidates to try."""
+        candidates = []
+        if self._resolved_model:
+            candidates.append(self._resolved_model)
+        if requested_model and requested_model not in candidates:
+            candidates.append(requested_model)
+        if self.default_model and self.default_model not in candidates:
+            candidates.append(self.default_model)
+        for m in FALLBACK_MODELS:
+            if m not in candidates:
+                candidates.append(m)
+        return candidates
 
     def generate_text(
         self,
@@ -74,43 +105,54 @@ class GeminiProvider(BaseAIProvider):
         system_prompt: Optional[str] = None,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1000,
+        max_tokens: int = 4096,
     ) -> AIResponse:
-        """Generates plain text response via Gemini."""
+        """Generates plain text response via Gemini with automatic model failover."""
         self._ensure_configured()
         self._check_daily_quota()
 
         import google.generativeai as genai
 
-        target_model = model or self.default_model
         generation_config = genai.types.GenerationConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
         )
 
-        gemini_model = genai.GenerativeModel(
-            model_name=target_model,
-            system_instruction=system_prompt if system_prompt else None,
-        )
+        candidates = self._get_candidate_models(model)
+        last_error = None
 
-        try:
-            response = gemini_model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
-            self._daily_request_count += 1
-            
-            output_text = response.text if response.text else ""
-            return AIResponse(
-                text=output_text,
-                provider=self.name,
-                model=target_model,
-                raw_response=response,
-                metadata={"daily_calls_used": self._daily_request_count}
-            )
-        except Exception as e:
-            logger.error(f"Gemini API error during text generation: {e}")
-            raise
+        for candidate in candidates:
+            try:
+                gemini_model = genai.GenerativeModel(
+                    model_name=candidate,
+                    system_instruction=system_prompt if system_prompt else None,
+                )
+                response = gemini_model.generate_content(
+                    prompt,
+                    generation_config=generation_config
+                )
+                self._daily_request_count += 1
+                self._resolved_model = candidate
+
+                output_text = response.text if response.text else ""
+                return AIResponse(
+                    text=output_text,
+                    provider=self.name,
+                    model=candidate,
+                    raw_response=response,
+                    metadata={"daily_calls_used": self._daily_request_count}
+                )
+            except Exception as e:
+                err_str = str(e)
+                if "404" in err_str or "not found" in err_str:
+                    logger.warning(f"Model '{candidate}' not found, trying next candidate...")
+                    last_error = e
+                    continue
+                else:
+                    logger.error(f"Gemini API error during text generation: {e}")
+                    raise
+
+        raise last_error or RuntimeError("All Gemini model candidates failed.")
 
     def generate_json(
         self,
@@ -119,39 +161,17 @@ class GeminiProvider(BaseAIProvider):
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> Dict[str, Any]:
-        """Generates structured JSON data from Gemini."""
-        self._ensure_configured()
-        self._check_daily_quota()
-
-        import google.generativeai as genai
-
-        target_model = model or self.default_model
-        generation_config = genai.types.GenerationConfig(
+        """Generates structured JSON data from Gemini with clean regex parsing."""
+        enhanced_prompt = prompt + "\n\nCRITICAL: Respond ONLY with valid JSON. Do not write any conversational text outside the JSON block."
+        res = self.generate_text(
+            prompt=enhanced_prompt,
+            system_prompt=system_prompt,
+            model=model,
             temperature=temperature,
-            response_mime_type="application/json",
+            max_tokens=4096,
         )
-
-        gemini_model = genai.GenerativeModel(
-            model_name=target_model,
-            system_instruction=system_prompt if system_prompt else None,
-        )
-
-        try:
-            response = gemini_model.generate_content(
-                prompt,
-                generation_config=generation_config
-            )
-            self._daily_request_count += 1
-
-            cleaned = self._clean_json_string(response.text)
-            return json.loads(cleaned)
-        except json.JSONDecodeError as jde:
-            logger.warning(f"Failed to parse direct JSON from Gemini, attempting regex extraction: {jde}")
-            cleaned = self._clean_json_string(response.text)
-            return json.loads(cleaned)
-        except Exception as e:
-            logger.error(f"Gemini API error during JSON generation: {e}")
-            raise
+        cleaned = self._clean_json_string(res.text)
+        return json.loads(cleaned)
 
     @staticmethod
     def _clean_json_string(text: str) -> str:
@@ -160,4 +180,9 @@ class GeminiProvider(BaseAIProvider):
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
         if match:
             return match.group(1).strip()
+        # Find first { and last } or first [ and last ]
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            return text[first_brace:last_brace + 1].strip()
         return text

@@ -78,8 +78,8 @@ class DatabaseConfig:
 @dataclass
 class GeminiConfig:
     api_key: str = field(default_factory=lambda: _get("GEMINI_API_KEY"))
-    default_model: str = field(default_factory=lambda: _get("GEMINI_DEFAULT_MODEL", "gemini-1.5-flash"))
-    pro_model: str = field(default_factory=lambda: _get("GEMINI_PRO_MODEL", "gemini-1.5-pro"))
+    default_model: str = field(default_factory=lambda: _get("GEMINI_DEFAULT_MODEL", "gemini-3.5-flash"))
+    pro_model: str = field(default_factory=lambda: _get("GEMINI_PRO_MODEL", "gemini-3.5-flash-lite"))
     daily_limit: int = field(default_factory=lambda: _get_int("GEMINI_DAILY_REQUEST_LIMIT", 1400))
 
     @property
