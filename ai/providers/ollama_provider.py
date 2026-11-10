@@ -115,7 +115,11 @@ class OllamaProvider(BaseAIProvider):
 
             raw_text = data.get("response", "").strip()
             cleaned = self._clean_json_string(raw_text)
-            return json.loads(cleaned)
+            try:
+                return json.loads(cleaned, strict=False)
+            except Exception:
+                sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)
+                return json.loads(sanitized, strict=False)
         except Exception as e:
             logger.error(f"Ollama JSON generation error: {e}")
             raise

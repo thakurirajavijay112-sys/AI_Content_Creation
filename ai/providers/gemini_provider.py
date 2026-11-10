@@ -105,6 +105,7 @@ class GeminiProvider(BaseAIProvider):
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        response_mime_type: Optional[str] = None,
     ) -> AIResponse:
         """Generates plain text response via Gemini with automatic model failover."""
         self._ensure_configured()
@@ -112,10 +113,14 @@ class GeminiProvider(BaseAIProvider):
 
         import google.generativeai as genai
 
-        generation_config = genai.types.GenerationConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        )
+        gen_config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if response_mime_type:
+            gen_config_kwargs["response_mime_type"] = response_mime_type
+
+        generation_config = genai.types.GenerationConfig(**gen_config_kwargs)
 
         candidates = self._get_candidate_models(model)
         last_error = None
@@ -167,7 +172,7 @@ class GeminiProvider(BaseAIProvider):
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> Dict[str, Any]:
-        """Generates structured JSON data from Gemini with clean regex parsing."""
+        """Generates structured JSON data from Gemini with clean parsing and control character repair."""
         enhanced_prompt = prompt + "\n\nCRITICAL: Respond ONLY with valid JSON. Do not write any conversational text outside the JSON block."
         res = self.generate_text(
             prompt=enhanced_prompt,
@@ -175,9 +180,30 @@ class GeminiProvider(BaseAIProvider):
             model=model,
             temperature=temperature,
             max_tokens=4096,
+            response_mime_type="application/json",
         )
         cleaned = self._clean_json_string(res.text)
-        return json.loads(cleaned)
+
+        # 1. Try standard lenient parse (strict=False permits literal newlines inside strings)
+        try:
+            return json.loads(cleaned, strict=False)
+        except Exception as first_err:
+            logger.warning(f"Initial JSON parse failed ({first_err}), attempting control character sanitization...")
+
+        # 2. Sanitize unescaped control characters (ASCII 0-31 except \t, \r, \n)
+        sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', cleaned)
+        try:
+            return json.loads(sanitized, strict=False)
+        except Exception:
+            pass
+
+        # 3. Replace raw newlines inside string literals with \n
+        def escape_string_newlines(match):
+            inner = match.group(0)
+            return inner.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+
+        escaped = re.sub(r'"(?:[^"\\]|\\.)*"', escape_string_newlines, sanitized, flags=re.DOTALL)
+        return json.loads(escaped, strict=False)
 
     @staticmethod
     def _clean_json_string(text: str) -> str:

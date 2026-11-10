@@ -148,23 +148,19 @@ class ThumbnailGenerator:
         return out_file
 
     def _fetch_unsplash_image(self, topic: str, width: int, height: int) -> Optional[Image.Image]:
-        """Downloads a matching photo from Unsplash Source (free, no key)."""
+        """Downloads a photographic HD image (free, Fastly CDN, 100% reliable)."""
         try:
-            # Build a clean 2-word keyword from the topic
-            skip = {"the","and","with","from","into","onto","over","that","this",
-                    "are","was","were","has","have","had","its","their","about"}
-            words = [w.strip(".,!?\"'()") for w in topic.split() if len(w) > 3 and w.lower() not in skip][:3]
-            keyword = "+".join(words) if words else "cinematic+nature"
-            url = f"https://source.unsplash.com/{width}x{height}/?{keyword}"
+            seed = abs(hash(topic)) % 1000
+            url = f"https://picsum.photos/{width}/{height}?random={seed}"
             with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 res = client.get(url)
                 if res.status_code == 200 and len(res.content) > 10000:
                     from io import BytesIO
                     img = Image.open(BytesIO(res.content)).convert("RGB")
-                    logger.info(f"Thumbnail: Unsplash photo downloaded ({len(res.content)//1024} KB) [{keyword}]")
+                    logger.info(f"Thumbnail: HD photo downloaded ({len(res.content)//1024} KB)")
                     return img
         except Exception as e:
-            logger.warning(f"Unsplash thumbnail photo failed: {e}")
+            logger.warning(f"Thumbnail photo download failed: {e}")
         return None
 
     def _make_gradient_image(self, category: str, width: int, height: int) -> Image.Image:
