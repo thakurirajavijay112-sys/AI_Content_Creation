@@ -88,13 +88,14 @@ class TestShortsEnginePipeline:
     """Tests the full end-to-end Shorts production pipeline."""
 
     @pytest.fixture(autouse=True)
-    def setup_test_db(self, tmp_path, monkeypatch):
+    def setup_test_db(self, tmp_path):
+        from database.db_manager import db
         test_db = tmp_path / "test_shorts_engine.db"
-        monkeypatch.setenv("DATABASE_PATH", str(test_db))
-        from database.db_manager import DatabaseManager
-        import database.db_manager as db_mod
-        db_mod.db = DatabaseManager()
-        db_mod.db.initialise_schema()
+        orig_path = db.db_path
+        db.set_path(test_db)
+        db.initialise_schema()
+        yield
+        db.set_path(orig_path)
 
     def test_produce_short_end_to_end(self, monkeypatch):
         # Configure Mock AI provider so the test runs completely locally
