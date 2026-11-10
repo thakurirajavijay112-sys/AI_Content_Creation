@@ -221,13 +221,14 @@ class TestIdeaGenerator:
     """Tests content idea generation and database storage."""
 
     @pytest.fixture(autouse=True)
-    def setup_test_db(self, tmp_path, monkeypatch):
+    def setup_test_db(self, tmp_path):
+        from database.db_manager import db
         test_db = tmp_path / "test_ideas.db"
-        monkeypatch.setenv("DATABASE_PATH", str(test_db))
-        from database.db_manager import DatabaseManager
-        import database.db_manager as db_mod
-        db_mod.db = DatabaseManager()
-        db_mod.db.initialise_schema()
+        orig_path = db.db_path
+        db.set_path(test_db)
+        db.initialise_schema()
+        yield
+        db.set_path(orig_path)
 
     def test_generates_and_stores_ideas(self):
         mock_provider = MockAIProvider(name="mock")
@@ -259,13 +260,14 @@ class TestScriptGenerator:
     """Tests script generation, scene parsing, and word counting."""
 
     @pytest.fixture(autouse=True)
-    def setup_test_db(self, tmp_path, monkeypatch):
+    def setup_test_db(self, tmp_path):
+        from database.db_manager import db
         test_db = tmp_path / "test_scripts.db"
-        monkeypatch.setenv("DATABASE_PATH", str(test_db))
-        from database.db_manager import DatabaseManager
-        import database.db_manager as db_mod
-        db_mod.db = DatabaseManager()
-        db_mod.db.initialise_schema()
+        orig_path = db.db_path
+        db.set_path(test_db)
+        db.initialise_schema()
+        yield
+        db.set_path(orig_path)
 
     def test_generates_script_with_scenes(self):
         mock_provider = MockAIProvider(name="mock")

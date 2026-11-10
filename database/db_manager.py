@@ -26,10 +26,16 @@ class DatabaseManager:
     Thread-safe via check_same_thread=False with per-operation connections.
     """
 
-    def __init__(self):
-        self.db_path = config.database.path
+    def __init__(self, db_path: Optional[Any] = None):
+        self.db_path = Path(db_path) if db_path else config.database.path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Database path: {self.db_path}")
+
+    def set_path(self, new_path: Any):
+        """Switches database path dynamically (used in testing)."""
+        self.db_path = Path(new_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Database path switched to: {self.db_path}")
 
     def _connect(self) -> sqlite3.Connection:
         """Create a new SQLite connection with optimal settings."""

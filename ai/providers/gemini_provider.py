@@ -17,13 +17,11 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Fallback candidate models in order of priority (Lite models have separate, much larger free quotas)
+# Models confirmed working on Gemini API with active generation capabilities
 FALLBACK_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemma-4-26b-a4b-it",
+    "gemini-flash-lite-latest",    # Primary free-tier model (high quota, fast)
+    "gemini-flash-latest",         # Standard high-speed fallback
+    "gemma-4-26b-a4b-it",          # Open weights model hosted on Gemini API
 ]
 
 
@@ -36,13 +34,13 @@ class GeminiProvider(BaseAIProvider):
     def __init__(self):
         super().__init__(
             name="gemini",
-            default_model="gemini-3.5-flash-lite"
+            default_model="gemini-flash-lite-latest"
         )
         self.api_key = config.ai.gemini.api_key
         self._client_configured = False
         self._daily_request_count = 0
         self._last_count_date = datetime.now().date()
-        self._resolved_model: Optional[str] = "gemini-3.5-flash-lite"
+        self._resolved_model: Optional[str] = "gemini-flash-lite-latest"
 
     def _ensure_configured(self):
         """Initializes the google.generativeai client once key is verified."""

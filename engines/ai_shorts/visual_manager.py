@@ -98,21 +98,28 @@ class VisualManager:
             img_file = self.visuals_dir / f"scene_{slug}_{idx}.jpg"
             clip_file = self.visuals_dir / f"scene_clip_{slug}_{idx}.mp4"
 
-            # Download visual if not cached
+            # Download visual if not cached — try Unsplash first (real photos, no API key),
+            # then Pollinations AI (generated), then fall back to animated gradient card.
             if not img_file.exists():
-                downloaded = self._download_pollinations_image(enhanced_prompt, img_file)
+                downloaded = self._download_unsplash_image(prompt, img_file)
                 if not downloaded:
-                    # If Pollinations is unavailable, generate a colorful base card
+                    downloaded = self._download_pollinations_image(enhanced_prompt, img_file)
+                if not downloaded:
                     self._create_image_card(enhanced_prompt, category, img_file)
 
             if not img_file.exists():
                 continue
 
-            # Smooth, centered cinematic Ken Burns zoom (d=1 ensures continuous smooth frame progression)
+            # Smooth, centered cinematic Ken Burns zoom with variety per scene
+            zoom_direction = "in" if idx % 2 == 0 else "out"
+            if zoom_direction == "in":
+                zoom_expr = "min(zoom+0.0010,1.25)"
+            else:
+                zoom_expr = "max(zoom-0.0010,1.00)"
             vf = (
                 "scale=1080:1920:force_original_aspect_ratio=increase,"
                 "crop=1080:1920,"
-                "zoompan=z='min(zoom+0.0012,1.20)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
+                f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=30"
             )
             cmd = [
                 str(ffmpeg), "-y",
@@ -121,8 +128,8 @@ class VisualManager:
                 "-vf", vf,
                 "-t", f"{duration_per_scene:.2f}",
                 "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-crf", "20",
+                "-preset", "fast",
+                "-crf", "17",
                 "-pix_fmt", "yuv420p",
                 str(clip_file),
             ]
@@ -149,8 +156,11 @@ class VisualManager:
             "-safe", "0",
             "-i", str(concat_txt),
             "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "20",
+            "-preset", "fast",
+            "-crf", "17",
+            "-b:v", "4M",
+            "-maxrate", "6M",
+            "-bufsize", "8M",
             "-pix_fmt", "yuv420p",
             "-t", f"{total_duration:.2f}",
             str(final_out),
@@ -163,45 +173,102 @@ class VisualManager:
 
         return None
 
+    def _extract_keywords(self, visual_prompt: str) -> str:
+        """Extracts 1-3 clean keyword terms from a visual prompt for image search."""
+        # Remove common filler words, keep meaningful nouns/adjectives
+        skip = {"the","and","with","from","into","onto","over","under","through",
+                "cinematic","lighting","photorealistic","resolution","wallpaper",
+                "vertical","ultra","realistic","high","quality","dramatic","epic"}
+        words = [w.strip(".,!?\"'()") for w in visual_prompt.split()]
+        keywords = [w for w in words if len(w) > 3 and w.lower() not in skip][:3]
+        return "+".join(keywords) if keywords else "nature+landscape"
+
+    def _download_unsplash_image(self, visual_prompt: str, out_path: Path) -> bool:
+        """Downloads a beautiful real photo from Unsplash (free, no API key needed)."""
+        try:
+            keywords = self._extract_keywords(visual_prompt)
+            url = f"https://source.unsplash.com/1080x1920/?{keywords}"
+            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                res = client.get(url)
+                if res.status_code == 200 and len(res.content) > 10000:
+                    out_path.write_bytes(res.content)
+                    logger.info(f"Downloaded Unsplash visual: {out_path.name} ({len(res.content)//1024} KB) [{keywords}]")
+                    return True
+        except Exception as e:
+            logger.warning(f"Unsplash visual download failed: {e}")
+        return False
+
     def _download_pollinations_image(self, prompt: str, out_path: Path) -> bool:
         """Downloads a high-res 1080x1920 vertical AI visual from Pollinations.ai (Free)."""
         try:
-            # Clean and simplify prompt to 5-8 salient words to avoid URL errors and timeouts
-            clean_words = [w for w in prompt.replace(",", " ").replace(".", " ").replace("'", "").split() if len(w) > 2][:8]
-            clean_prompt = " ".join(clean_words) if clean_words else "cinematic vertical 9:16 background"
+            # Use only 4-6 clean keywords to avoid 402 errors
+            clean_words = [w for w in prompt.replace(",", " ").replace(".", " ").replace("'", "").split() if len(w) > 3][:6]
+            clean_prompt = " ".join(clean_words) if clean_words else "cinematic vertical background"
             encoded = urllib.parse.quote(clean_prompt)
-            url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true"
-            with httpx.Client(timeout=25.0, follow_redirects=True) as client:
+            url = f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1920&nologo=true&model=flux-schnell"
+            with httpx.Client(timeout=30.0, follow_redirects=True) as client:
                 res = client.get(url)
                 if res.status_code == 200 and len(res.content) > 5000:
                     out_path.write_bytes(res.content)
-                    logger.info(f"Downloaded scene visual: {out_path.name} ({len(res.content)//1024} KB)")
+                    logger.info(f"Downloaded Pollinations visual: {out_path.name} ({len(res.content)//1024} KB)")
                     return True
+                else:
+                    logger.warning(f"Pollinations returned {res.status_code} for prompt: {clean_prompt[:60]}")
         except Exception as e:
             logger.warning(f"Pollinations visual download failed: {e}")
         return False
 
     def _create_image_card(self, text: str, category: str, out_path: Path):
-        """Creates a vibrant, colorful abstract graphic when an image download is unavailable."""
-        from PIL import Image, ImageDraw
+        """Creates a vibrant cinematic gradient card when image download is unavailable."""
+        from PIL import Image, ImageDraw, ImageFont
+        import math
+        # Vivid color pairs — never dark/black backgrounds
         color_map = {
-            "amazing_facts": ((10, 37, 64), (0, 102, 153)),
-            "motivation": ((28, 28, 28), (184, 134, 11)),
-            "ai_technology": ((10, 25, 47), (0, 180, 216)),
-            "horror_stories": ((31, 5, 11), (102, 12, 24)),
-            "football_facts": ((6, 45, 22), (27, 153, 139)),
-            "cricket_facts": ((14, 42, 71), (43, 112, 201)),
+            "amazing_facts":  ((6, 72, 141),   (0, 180, 216)),   # Royal Blue → Cyan
+            "motivation":     ((139, 92, 0),    (255, 183, 3)),   # Dark Gold → Bright Gold
+            "ai_technology":  ((13, 27, 92),    (99, 102, 241)),  # Deep Indigo → Violet
+            "horror_stories": ((92, 10, 25),    (200, 30, 60)),   # Dark Red → Crimson
+            "football_facts": ((22, 101, 52),   (74, 222, 128)),  # Forest → Neon Green
+            "cricket_facts":  ((30, 64, 175),   (96, 165, 250)),  # Navy → Sky Blue
         }
-        c1, c2 = color_map.get(category, ((10, 37, 64), (0, 102, 153)))
+        c1, c2 = color_map.get(category, ((13, 110, 253), (99, 179, 237)))  # Vibrant Blue default
         img = Image.new("RGB", (1080, 1920), color=c1)
         draw = ImageDraw.Draw(img)
-        # Draw smooth vertical cinematic gradient
-        for y in range(0, 1920, 2):
-            ratio = y / 1920.0
-            r = int(c1[0] * (1 - ratio) + c2[0] * ratio)
-            g = int(c1[1] * (1 - ratio) + c2[1] * ratio)
-            b = int(c1[2] * (1 - ratio) + c2[2] * ratio)
-            draw.line([(0, y), (1080, y)], fill=(r, g, b), width=2)
+        # Smooth diagonal gradient
+        for y in range(1920):
+            ratio = y / 1919.0
+            # Add subtle sine wave variation for visual depth
+            wave = 0.08 * math.sin(ratio * math.pi * 3)
+            t = max(0.0, min(1.0, ratio + wave))
+            r = int(c1[0] * (1 - t) + c2[0] * t)
+            g = int(c1[1] * (1 - t) + c2[1] * t)
+            b = int(c1[2] * (1 - t) + c2[2] * t)
+            draw.line([(0, y), (1080, y)], fill=(r, g, b))
+        # Draw bright geometric accent lines
+        for i in range(5):
+            y_pos = int(1920 * (i + 1) / 6)
+            draw.line([(0, y_pos), (1080, y_pos)], fill=(255, 255, 255, 30), width=2)
+        # Bold title text in upper third
+        try:
+            font_path = r"C:\Windows\Fonts\arialbd.ttf"
+            font = ImageFont.truetype(font_path, size=72)
+        except Exception:
+            font = ImageFont.load_default()
+        # Word wrap to ~20 chars per line
+        words = text.split()
+        lines, current = [], []
+        for w in words[:20]:  # Cap to avoid overflow
+            current.append(w)
+            if len(" ".join(current)) > 18:
+                lines.append(" ".join(current[:-1]))
+                current = [w]
+        if current:
+            lines.append(" ".join(current))
+        wrapped = "\n".join(lines[:5])
+        # Draw with shadow for readability
+        x, y_text = 54, 300
+        draw.text((x + 3, y_text + 3), wrapped, font=font, fill=(0, 0, 0, 180))
+        draw.text((x, y_text), wrapped, font=font, fill=(255, 255, 255))
         out_path.parent.mkdir(parents=True, exist_ok=True)
         img.save(str(out_path), "JPEG", quality=95)
 

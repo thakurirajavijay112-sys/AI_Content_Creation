@@ -78,11 +78,13 @@ class AIShortsEngine:
         language: str = "en",
         voice_override: Optional[str] = None,
         auto_queue_publish: bool = True,
+        captions: bool = True,
     ) -> ShortsProductionResult:
         """
         Executes the full automated production workflow.
         Returns complete metadata, rendered video path, and quality score.
         Supports 8 languages (en, hi, ne, pt, es, zh, ja, ar).
+        captions=True burns styled subtitles; captions=False produces clean video.
         """
         start_time = time.time()
         category_clean = category.lower().replace(" ", "_").strip()
@@ -157,25 +159,28 @@ class AIShortsEngine:
 
         # ── Step 7: Subtitle Generation ─────────────────────────────────────────
         # Convert word boundaries to dynamic 4-word subtitle segments
-        if tts_result.word_timestamps:
-            segments = transcription_engine.segments_from_word_timestamps(
-                tts_result.word_timestamps, words_per_segment=4
+        ass_path: Optional[Path] = None
+        if captions:
+            if tts_result.word_timestamps:
+                segments = transcription_engine.segments_from_word_timestamps(
+                    tts_result.word_timestamps, words_per_segment=4
+                )
+            else:
+                segments = transcription_engine.segments_from_word_timestamps([], 4)
+
+            ass_filename = f"subs_{timestamp_prefix}_{slug}.ass"
+            ass_path = subtitle_generator.output_dir / ass_filename
+            subtitle_generator.generate_styled_ass(
+                segments=segments,
+                output_path=str(ass_path),
+                font_name=lang_profile.font_name,
+                font_size=56,
+                primary_color=profile.subtitle_primary_color,
+                outline_color=profile.subtitle_outline_color,
+                margin_v=340,
             )
         else:
-            # Fallback estimation if offline TTS was used
-            segments = transcription_engine.segments_from_word_timestamps([], 4)
-
-        ass_filename = f"subs_{timestamp_prefix}_{slug}.ass"
-        ass_path = subtitle_generator.output_dir / ass_filename
-        subtitle_generator.generate_styled_ass(
-            segments=segments,
-            output_path=str(ass_path),
-            font_name=lang_profile.font_name,
-            font_size=56,
-            primary_color=profile.subtitle_primary_color,
-            outline_color=profile.subtitle_outline_color,
-            margin_v=340,
-        )
+            logger.info("Captions disabled — skipping subtitle generation.")
 
         # ── Step 8: Multi-Scene Cinematic Visual Sourcing ───────────────────────
         visual_path = visual_manager.get_or_create_multi_scene_visual(
@@ -193,20 +198,20 @@ class AIShortsEngine:
             visual_source=str(visual_path),
             audio_path=str(audio_path),
             output_path=str(final_video_path),
-            subtitle_path=str(ass_path),
+            subtitle_path=str(ass_path) if ass_path else None,
             duration_s=actual_duration,
             width=1080,
             height=1920,
         )
 
-        # ── Step 11: Thumbnail Extraction ───────────────────────────────────────
+        # ── Step 11: Branded Thumbnail ───────────────────────────────────────────
         thumb_filename = f"thumb_{timestamp_prefix}_{slug}.jpg"
         thumb_path = thumbnail_generator.output_dir / thumb_filename
         try:
-            thumbnail_generator.extract_frame_from_video(
-                video_path=str(rendered_video),
+            thumbnail_generator.create_branded_thumbnail(
+                title=idea_title,
                 output_path=str(thumb_path),
-                timestamp_s=min(2.0, actual_duration / 2),
+                category=category_clean,
             )
         except Exception:
             thumbnail_generator.create_color_card(

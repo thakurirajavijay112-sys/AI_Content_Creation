@@ -103,6 +103,7 @@ with tab_prod:
         st.write("")
         st.write("")
         auto_queue = st.checkbox("Queue automatically", value=True)
+        show_captions = st.checkbox("🎯 Show Captions", value=True, help="Burn subtitles / captions into video")
 
     produce_btn = st.button("⚡ Produce 1080x1920 Video Now", use_container_width=True, type="primary")
 
@@ -133,6 +134,7 @@ with tab_prod:
                 language=selected_lang_code,
                 voice_override=selected_voice,
                 auto_queue_publish=auto_queue,
+                captions=show_captions,
             )
 
             progress_bar.progress(100)
