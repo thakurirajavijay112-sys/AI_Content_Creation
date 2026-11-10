@@ -27,6 +27,17 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Stylistic / filler words to strip when extracting topical search keywords
+_STYLE_FILLER_WORDS = {
+    "the", "and", "with", "from", "into", "onto", "over", "under", "through",
+    "cinematic", "lighting", "photorealistic", "resolution", "wallpaper",
+    "vertical", "ultra", "realistic", "high", "quality", "dramatic", "epic",
+    "shot", "macro", "close", "close-up", "wide", "fast-paced", "rapid", "montage",
+    "scene", "showing", "slow-motion", "timelapse", "style", "view", "4k", "8k",
+    "futuristic", "transitioning", "revealing", "camera", "panning", "zooming",
+    "glowing", "particles", "action", "angle", "perspective", "hand", "finger"
+}
+
 
 class VisualManager:
     """Manages visual assets and dynamic cinematic video background generation for short videos."""
@@ -70,7 +81,8 @@ class VisualManager:
                 category=category,
                 total_duration=total_duration,
                 slug=clean_slug,
-                asset_dir=video_asset_dir
+                asset_dir=video_asset_dir,
+                title_text=title_text,
             )
             if multi_scene_path and multi_scene_path.exists():
                 return multi_scene_path
@@ -87,6 +99,7 @@ class VisualManager:
         total_duration: float,
         slug: str,
         asset_dir: Path,
+        title_text: str = "",
     ) -> Optional[Path]:
         """Generates scene-by-scene cinematic animated clips and concatenates them."""
         ffmpeg = ffmpeg_locator.get_ffmpeg_path()
@@ -109,7 +122,14 @@ class VisualManager:
 
             # Source actual visual asset (never draw prompt text on blue backgrounds)
             if not img_file.exists() or not self._validate_image(img_file):
-                downloaded = self._source_scene_visual(prompt, category, idx, slug, img_file)
+                downloaded = self._source_scene_visual(
+                    prompt=prompt,
+                    category=category,
+                    scene_idx=idx,
+                    slug=slug,
+                    out_path=img_file,
+                    topic_context=title_text,
+                )
                 if not downloaded or not self._validate_image(img_file):
                     raise RuntimeError(
                         f"Visual asset sourcing failed for Scene {idx + 1}: '{prompt}'. "
@@ -186,33 +206,53 @@ class VisualManager:
         category: str,
         scene_idx: int,
         slug: str,
-        out_path: Path
+        out_path: Path,
+        topic_context: str = ""
     ) -> bool:
         """
         Attempts visual sourcing in prioritized order:
-        1. Wikimedia Commons (Real topic-matched photos, CC/Public Domain)
-        2. Pollinations AI (Turbo model, clean prompt)
-        3. High-Resolution Photographic Archive (Fastly CDN, real photos, guaranteed)
+        1. Gemini Dedicated Image Generation Model (gemini-3.1-flash-image)
+        2. Wikimedia Commons (Real topic-matched photos, CC/Public Domain)
+        3. Pollinations AI (Turbo model, clean prompt)
+        4. High-Resolution Photographic Archive (Fastly CDN, real photos, guaranteed)
         """
-        # Clean prompt keywords for search
-        skip = {"the", "and", "with", "from", "into", "onto", "over", "under", "through",
-                "cinematic", "lighting", "photorealistic", "resolution", "wallpaper",
-                "vertical", "ultra", "realistic", "high", "quality", "dramatic", "epic", "shot", "macro"}
-        words = [w.strip(".,!?\"'()") for w in prompt.split() if len(w) > 3 and w.lower() not in skip]
+        # 1. Attempt Gemini dedicated image-generation model
+        try:
+            from ai.providers.gemini_provider import GeminiProvider
+            gemini = GeminiProvider()
+            if gemini.is_available():
+                gemini.generate_image(prompt, out_path, model_name="gemini-3.1-flash-image")
+                if self._validate_image(out_path):
+                    logger.info(f"Scene {scene_idx + 1}: Generated image via Gemini (gemini-3.1-flash-image)")
+                    return True
+        except Exception as e:
+            logger.info(f"Scene {scene_idx + 1}: Gemini image generation unavailable ({e}). Continuing to authorized visual sourcing.")
 
-        # 1. Try Wikimedia Commons search with topic keywords
-        for keyword in words[:3]:
-            if self._download_wikimedia_image(keyword, out_path):
-                logger.info(f"Scene {scene_idx + 1}: Sourced authentic photo from Commons ('{keyword}')")
+        # Extract meaningful topical keywords (combining topic context with prompt, stripping filler words)
+        combined_text = f"{topic_context} {prompt}".strip()
+        words = [w.strip(".,!?\"'()") for w in combined_text.split() if len(w) > 3 and w.lower() not in _STYLE_FILLER_WORDS]
+
+        # 2. Try Wikimedia Commons search with topic keywords
+        # First try paired keywords (e.g. "superconductor levitation")
+        candidate_queries = []
+        if len(words) >= 2:
+            candidate_queries.append(f"{words[0]} {words[1]}")
+        for w in words[:4]:
+            if w not in candidate_queries:
+                candidate_queries.append(w)
+
+        for query in candidate_queries:
+            if self._download_wikimedia_image(query, out_path):
+                logger.info(f"Scene {scene_idx + 1}: Sourced authentic photo from Commons ('{query}')")
                 return True
 
-        # 2. Try Pollinations AI with turbo model
+        # 3. Try Pollinations AI with turbo model
         clean_prompt = " ".join(words[:6]) if words else f"{category} concept"
         if self._download_pollinations_turbo(clean_prompt, scene_idx, out_path):
             logger.info(f"Scene {scene_idx + 1}: Generated AI visual from Pollinations")
             return True
 
-        # 3. Fallback to High-Resolution Photography Archive
+        # 4. Fallback to High-Resolution Photography Archive
         seed = (abs(hash(f"{slug}_{category}_{scene_idx}")) % 900) + 100
         if self._download_hd_photography(seed, out_path):
             logger.info(f"Scene {scene_idx + 1}: Sourced high-resolution photography asset #{seed}")

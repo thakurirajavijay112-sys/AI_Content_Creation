@@ -9,6 +9,7 @@ and daily quota protection.
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from ai.providers.base_provider import BaseAIProvider, AIResponse
@@ -204,6 +205,63 @@ class GeminiProvider(BaseAIProvider):
 
         escaped = re.sub(r'"(?:[^"\\]|\\.)*"', escape_string_newlines, sanitized, flags=re.DOTALL)
         return json.loads(escaped, strict=False)
+
+    def generate_image(
+        self,
+        prompt: str,
+        out_path: Path,
+        model_name: str = "gemini-3.1-flash-image",
+    ) -> Path:
+        """
+        Sends scene visual prompt to dedicated Gemini image-generation model.
+        Decodes inline image data and saves to out_path.
+        Logs model, response type, output status without leaking API keys.
+        """
+        self._ensure_configured()
+        import google.generativeai as genai
+        from PIL import Image
+        import base64
+
+        logger.info(f"[Gemini Image Gen] Requesting image with model '{model_name}'...")
+        out_path = Path(out_path).resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+        except Exception as e:
+            err_msg = str(e)
+            if "limit: 0" in err_msg:
+                logger.warning(
+                    f"[Gemini Image Gen] Model '{model_name}' has quota limit: 0 on current Free Tier key. "
+                    "Image generation on Gemini API requires a billing-enabled account ($0.03/image)."
+                )
+            else:
+                logger.warning(f"[Gemini Image Gen] API call failed with model '{model_name}': {err_msg[:200]}")
+            raise RuntimeError(f"Gemini image generation failed ({model_name}): {err_msg[:200]}")
+
+        # Extract image from candidates
+        if not response.candidates:
+            raise RuntimeError(f"Gemini image model '{model_name}' returned empty candidates.")
+
+        for part in response.candidates[0].content.parts:
+            # Check for inline image data
+            inline_data = getattr(part, "inline_data", None)
+            if inline_data and getattr(inline_data, "data", None):
+                raw_bytes = inline_data.data
+                if isinstance(raw_bytes, str):
+                    raw_bytes = base64.b64decode(raw_bytes)
+                out_path.write_bytes(raw_bytes)
+                # Validate with Pillow
+                with Image.open(out_path) as img:
+                    img.verify()
+                logger.info(f"[Gemini Image Gen] Successfully saved image to {out_path.name} (type: {inline_data.mime_type})")
+                return out_path
+
+        # If model returned text instead of image
+        text_resp = getattr(response, "text", "")
+        logger.warning(f"[Gemini Image Gen] Model '{model_name}' returned text instead of image data: '{text_resp[:100]}'")
+        raise RuntimeError(f"Gemini image model '{model_name}' returned text instead of an image.")
 
     @staticmethod
     def _clean_json_string(text: str) -> str:
